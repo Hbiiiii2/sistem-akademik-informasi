@@ -1,0 +1,6 @@
+{
+  "name": "Sistem Akademik Akademik",
+  "description": "Sistem informasi akademik kampus sederhana dengan fitur CRUD mahasiswa, dosen, matakuliah, kelas, dan jadwal.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

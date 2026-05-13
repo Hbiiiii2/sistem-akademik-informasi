@@ -1,0 +1,90 @@
+{
+  "entities": {
+    "mahasiswa": {
+      "title": "Mahasiswa",
+      "description": "Data mahasiswa",
+      "type": "object",
+      "properties": {
+        "nama": { "type": "string", "description": "Nama lengkap mahasiswa" },
+        "nim": { "type": "string", "description": "Nomor Induk Mahasiswa" },
+        "jurusan": { "type": "string", "description": "Jurusan mahasiswa" },
+        "semester": { "type": "integer", "description": "Semester saat ini" },
+        "email": { "type": "string", "description": "Alamat email mahasiswa" },
+        "nomor_hp": { "type": "string", "description": "Nomor handphone mahasiswa" },
+        "status": { "type": "string", "description": "Status aktif/tidak aktif", "enum": ["Aktif", "Cuti", "Lulus", "Keluar"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["nama", "nim", "jurusan", "semester", "email"]
+    },
+    "dosen": {
+      "title": "Dosen",
+      "description": "Data dosen",
+      "type": "object",
+      "properties": {
+        "nama": { "type": "string", "description": "Nama lengkap dosen" },
+        "nidn": { "type": "string", "description": "Nomor Induk Dosen Nasional" },
+        "bidang": { "type": "string", "description": "Bidang keahlian" },
+        "email": { "type": "string", "description": "Alamat email dosen" },
+        "nomor_hp": { "type": "string", "description": "Nomor handphone dosen" },
+        "status": { "type": "string", "description": "Status aktif/tidak aktif", "enum": ["Aktif", "Tidak Aktif"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["nama", "nidn", "bidang", "email"]
+    },
+    "matakuliah": {
+      "title": "Mata Kuliah",
+      "description": "Data mata kuliah",
+      "type": "object",
+      "properties": {
+        "kode_matkul": { "type": "string", "description": "Kode mata kuliah" },
+        "nama_matkul": { "type": "string", "description": "Nama mata kuliah" },
+        "sks": { "type": "integer", "description": "Jumlah SKS" },
+        "semester": { "type": "integer", "description": "Semester ditawarkan" },
+        "deskripsi": { "type": "string", "description": "Deskripsi mata kuliah" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["kode_matkul", "nama_matkul", "sks", "semester"]
+    },
+    "kelas": {
+      "title": "Kelas",
+      "description": "Data kelas",
+      "type": "object",
+      "properties": {
+        "nama_kelas": { "type": "string", "description": "Nama kelas" },
+        "kapasitas": { "type": "integer", "description": "Kapasitas kelas" },
+        "wali_dosen": { "type": "string", "description": "ID dosen wali" },
+        "semester": { "type": "integer", "description": "Semester kelas" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["nama_kelas", "kapasitas", "wali_dosen", "semester"]
+    },
+    "jadwal": {
+      "title": "Jadwal",
+      "description": "Data jadwal perkuliahan",
+      "type": "object",
+      "properties": {
+        "hari": { "type": "string", "description": "Hari perkuliahan", "enum": ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"] },
+        "jam_mulai": { "type": "string", "description": "Waktu mulai" },
+        "jam_selesai": { "type": "string", "description": "Waktu selesai" },
+        "ruangan": { "type": "string", "description": "Ruang kelas" },
+        "mata_kuliah": { "type": "string", "description": "ID mata kuliah" },
+        "dosen": { "type": "string", "description": "ID dosen pengampu" },
+        "kelas": { "type": "string", "description": "ID kelas" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["hari", "jam_mulai", "jam_selesai", "ruangan", "mata_kuliah", "dosen", "kelas"]
+    }
+  },
+  "firestore": {
+    "mahasiswa": { "schema": "mahasiswa", "description": "Koleksi data mahasiswa" },
+    "dosen": { "schema": "dosen", "description": "Koleksi data dosen" },
+    "matakuliah": { "schema": "matakuliah", "description": "Koleksi data mata kuliah" },
+    "kelas": { "schema": "kelas", "description": "Koleksi data kelas" },
+    "jadwal": { "schema": "jadwal", "description": "Koleksi data jadwal" }
+  }
+}

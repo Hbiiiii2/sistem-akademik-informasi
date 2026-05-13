@@ -1,0 +1,111 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper Functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Entity Validations
+    function isValidMahasiswa(data) {
+      return data.nama is string && data.nama.size() <= 200 &&
+             data.nim is string && data.nim.size() <= 20 &&
+             data.jurusan is string && data.jurusan.size() <= 100 &&
+             data.semester is int && data.semester >= 1 && data.semester <= 14 &&
+             data.email is string && data.email.size() <= 100 &&
+             (data.nomor_hp == null || (data.nomor_hp is string && data.nomor_hp.size() <= 20)) &&
+             data.status in ['Aktif', 'Cuti', 'Lulus', 'Keluar'];
+    }
+
+    function isValidDosen(data) {
+      return data.nama is string && data.nama.size() <= 200 &&
+             data.nidn is string && data.nidn.size() <= 20 &&
+             data.bidang is string && data.bidang.size() <= 100 &&
+             data.email is string && data.email.size() <= 100 &&
+             (data.nomor_hp == null || (data.nomor_hp is string && data.nomor_hp.size() <= 20)) &&
+             data.status in ['Aktif', 'Tidak Aktif'];
+    }
+
+    function isValidMatakuliah(data) {
+      return data.kode_matkul is string && data.kode_matkul.size() <= 20 &&
+             data.nama_matkul is string && data.nama_matkul.size() <= 200 &&
+             data.sks is int && data.sks >= 1 && data.sks <= 6 &&
+             data.semester is int && data.semester >= 1 && data.semester <= 8 &&
+             (data.deskripsi == null || (data.deskripsi is string && data.deskripsi.size() <= 1000));
+    }
+
+    function isValidKelas(data) {
+      return data.nama_kelas is string && data.nama_kelas.size() <= 50 &&
+             data.kapasitas is int && data.kapasitas > 0 &&
+             data.wali_dosen is string &&
+             data.semester is int && data.semester >= 1;
+    }
+
+    function isValidJadwal(data) {
+      return data.hari in ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'] &&
+             data.jam_mulai is string && data.jam_mulai.size() <= 10 &&
+             data.jam_selesai is string && data.jam_selesai.size() <= 10 &&
+             data.ruangan is string && data.ruangan.size() <= 50 &&
+             data.mata_kuliah is string &&
+             data.dosen is string &&
+             data.kelas is string;
+    }
+
+    // Collection Rules
+    match /mahasiswa/{mId} {
+      allow read: if isSignedIn();
+      allow create: if isEmailVerified() && isValidId(mId) && isValidMahasiswa(incoming()) && incoming().createdAt == request.time;
+      allow update: if isEmailVerified() && isValidMahasiswa(incoming()) && incoming().updatedAt == request.time && incoming().nim == existing().nim;
+      allow delete: if isEmailVerified();
+    }
+
+    match /dosen/{dId} {
+      allow read: if isSignedIn();
+      allow create: if isEmailVerified() && isValidId(dId) && isValidDosen(incoming()) && incoming().createdAt == request.time;
+      allow update: if isEmailVerified() && isValidDosen(incoming()) && incoming().updatedAt == request.time && incoming().nidn == existing().nidn;
+      allow delete: if isEmailVerified();
+    }
+
+    match /matakuliah/{mkId} {
+      allow read: if isSignedIn();
+      allow create: if isEmailVerified() && isValidId(mkId) && isValidMatakuliah(incoming()) && incoming().createdAt == request.time;
+      allow update: if isEmailVerified() && isValidMatakuliah(incoming()) && incoming().updatedAt == request.time && incoming().kode_matkul == existing().kode_matkul;
+      allow delete: if isEmailVerified();
+    }
+
+    match /kelas/{kId} {
+      allow read: if isSignedIn();
+      allow create: if isEmailVerified() && isValidId(kId) && isValidKelas(incoming()) && incoming().createdAt == request.time;
+      allow update: if isEmailVerified() && isValidKelas(incoming()) && incoming().updatedAt == request.time;
+      allow delete: if isEmailVerified();
+    }
+
+    match /jadwal/{jId} {
+      allow read: if isSignedIn();
+      allow create: if isEmailVerified() && isValidId(jId) && isValidJadwal(incoming()) && incoming().createdAt == request.time;
+      allow update: if isEmailVerified() && isValidJadwal(incoming()) && incoming().updatedAt == request.time;
+      allow delete: if isEmailVerified();
+    }
+  }
+}

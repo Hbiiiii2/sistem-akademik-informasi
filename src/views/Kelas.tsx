@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { DoorOpen, Search, Plus, Edit2, Trash2, ChevronLeft, ChevronRight, X } from 'lucide-react';
-import { kelasApi, dosenApi, handleApiError, OperationType } from '../lib/api';
+import { kelasApi, dosenApi, matakuliahApi, handleApiError, OperationType } from '../lib/api';
 import Swal from 'sweetalert2';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -24,13 +24,14 @@ const PAGE_SIZE = 5;
 export default function KelasView() {
   const [data, setData] = useState<Kelas[]>([]);
   const [dosenList, setDosenList] = useState<any[]>([]);
+  const [matakuliahList, setMatakuliahList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [formData, setFormData] = useState<Kelas>({
-    nama: '', kapasitas: 30, dosen_id: '', semester: 1
+    nama: '', kapasitas: 30, dosen_id: '', semester: 1, matakuliah_id: ''
   });
 
   const fetchData = async () => {
@@ -39,8 +40,12 @@ export default function KelasView() {
       const list = await kelasApi.getAll();
       setData(list.filter(item => item.nama.toLowerCase().includes(searchTerm.toLowerCase())));
       
-      const dosenList = await dosenApi.getAll();
+      const [dosenList, matakuliahList] = await Promise.all([
+        dosenApi.getAll(),
+        matakuliahApi.getAll(),
+      ]);
       setDosenList(dosenList);
+      setMatakuliahList(matakuliahList);
     } catch (err) {
       handleApiError(err, OperationType.LIST, 'kelas');
     } finally { setLoading(false); }
@@ -87,6 +92,10 @@ export default function KelasView() {
   const totalPages = Math.ceil(data.length / PAGE_SIZE);
 
   const getDosenName = (id: string) => dosenList.find(d => d.id === id)?.nama || 'Unknown';
+  const getMatakuliahName = (id?: string) => {
+    if (!id) return '-';
+    return matakuliahList.find(m => m.id === id)?.nama || '-';
+  };
 
   return (
     <div className="space-y-6">
@@ -99,7 +108,7 @@ export default function KelasView() {
             value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
           />
         </div>
-        <button onClick={() => { setEditingId(null); setFormData({ nama: '', kapasitas: 30, dosen_id: '', semester: 1 }); setIsModalOpen(true); }}
+        <button onClick={() => { setEditingId(null); setFormData({ nama: '', kapasitas: 30, dosen_id: '', semester: 1, matakuliah_id: '' }); setIsModalOpen(true); }}
           className="bg-primary text-white px-6 py-3 rounded-2xl font-semibold flex items-center gap-2 shadow-lg shadow-primary/20"
         >
           <Plus className="w-5 h-5" /> Tambah Kelas
@@ -109,12 +118,13 @@ export default function KelasView() {
       <div className="glass rounded-3xl overflow-hidden neumorph">
         <table className="w-full text-left">
           <thead className="bg-slate-50/50 border-b border-slate-200/50 text-xs font-bold text-slate-400 uppercase">
-            <tr><th className="px-6 py-4">Nama Kelas</th><th className="px-6 py-4">Kapasitas</th><th className="px-6 py-4">Wali Dosen</th><th className="px-6 py-4">Smt</th><th className="px-6 py-4 text-right">Aksi</th></tr>
+            <tr><th className="px-6 py-4">Nama Kelas</th><th className="px-6 py-4">Mata Kuliah</th><th className="px-6 py-4">Kapasitas</th><th className="px-6 py-4">Wali Dosen</th><th className="px-6 py-4">Smt</th><th className="px-6 py-4 text-right">Aksi</th></tr>
           </thead>
           <tbody className="divide-y divide-slate-200/50 text-sm">
             {paginatedData.map(item => (
               <tr key={item.id} className="hover:bg-white/40">
                 <td className="px-6 py-4 font-bold text-primary">{item.nama}</td>
+                <td className="px-6 py-4 font-medium">{getMatakuliahName(item.matakuliah_id)}</td>
                 <td className="px-6 py-4">
                   <div className="flex items-center gap-2">
                     <span className="font-bold">{item.kapasitas}</span>
@@ -150,6 +160,10 @@ export default function KelasView() {
               <h3 className="text-xl font-bold mb-4">{editingId ? 'Edit Kelas' : 'Tambah Kelas'}</h3>
               <input required placeholder="Nama Kelas (Contoh: A1)" className="w-full p-3 border rounded-xl" value={formData.nama} onChange={e => setFormData({...formData, nama: e.target.value})} />
               <input required placeholder="Kapasitas" type="number" className="w-full p-3 border rounded-xl" value={formData.kapasitas} onChange={e => setFormData({...formData, kapasitas: parseInt(e.target.value)})} />
+              <select required className="w-full p-3 border rounded-xl bg-white" value={formData.matakuliah_id || ''} onChange={e => setFormData({...formData, matakuliah_id: e.target.value})}>
+                <option value="">Pilih Mata Kuliah</option>
+                {matakuliahList.map(m => <option key={m.id} value={m.id}>{m.nama}</option>)}
+              </select>
               <select required className="w-full p-3 border rounded-xl bg-white" value={formData.dosen_id} onChange={e => setFormData({...formData, dosen_id: e.target.value})}>
                 <option value="">Pilih Wali Dosen</option>
                 {dosenList.map(d => <option key={d.id} value={d.id}>{d.nama}</option>)}

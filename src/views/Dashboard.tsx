@@ -52,7 +52,29 @@ export default function Dashboard() {
           { ...prev[3], value: kelas.length },
         ]);
         
-        setRecentJadwal(jadwal.slice(0, 5));
+        const kelasById = new Map(kelas.map((item: any) => [String(item.id), item]));
+        const matakuliahById = new Map(matakuliah.map((item: any) => [String(item.id), item]));
+
+        const enrichedJadwal = jadwal.slice(0, 5).map((item: any) => {
+          const kelasId = item.kelas_id || item.kelasId;
+          const kelasItem = kelasById.get(String(kelasId));
+          const matakuliahId =
+            kelasItem?.matakuliah_id ||
+            kelasItem?.mata_kuliah_id ||
+            kelasItem?.matakuliahId ||
+            item.matakuliah_id ||
+            item.mata_kuliah_id ||
+            item.matakuliahId;
+          const matakuliahItem = matakuliahById.get(String(matakuliahId));
+
+          return {
+            ...item,
+            kelas_name: item.kelas_name || kelasItem?.nama || '-',
+            mata_kuliah_name: item.mata_kuliah_name || matakuliahItem?.nama || '-',
+          };
+        });
+
+        setRecentJadwal(enrichedJadwal);
       } catch (err) {
         console.error(err);
       } finally {
@@ -115,8 +137,8 @@ export default function Dashboard() {
                         <p className="text-xs text-slate-400">{jadwal.jam_mulai} - {jadwal.jam_selesai}</p>
                       </td>
                       <td className="px-6 py-4">
-                        <p className="font-medium text-sm">{jadwal.mata_kuliah_name || 'Loading...'}</p>
-                        <p className="text-xs text-slate-400">{jadwal.kelas_name || 'Sekolah'}</p>
+                        <p className="font-medium text-sm">{jadwal.mata_kuliah_name || '-'}</p>
+                        <p className="text-xs text-slate-400">{jadwal.kelas_name || '-'}</p>
                       </td>
                       <td className="px-6 py-4 text-sm font-medium">{jadwal.ruangan}</td>
                       <td className="px-6 py-4">

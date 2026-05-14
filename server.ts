@@ -1,117 +1,68 @@
 /**
  * Express Backend Server untuk Sistem Akademik
- * Local JSON storage fallback (works without MongoDB)
+ * MongoDB storage via Mongoose
  */
 
 import express, { Express, NextFunction, Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import fs from 'fs/promises';
-import path from 'path';
-import { randomUUID } from 'crypto';
 import jwt from 'jsonwebtoken';
 import axios from 'axios';
+import mongoose, { Schema } from 'mongoose';
 
 dotenv.config();
 
 const app: Express = express();
 const PORT = process.env.PORT || 5000;
 const API_BASE_URL = process.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/sistem-akademik';
 const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret_key_change_in_production';
 
-const DATA_DIR = path.join(process.cwd(), 'data');
-const DATA_FILE = path.join(DATA_DIR, 'local-db.json');
-
-type Store = {
-  mahasiswa: any[];
-  dosen: any[];
-  matakuliah: any[];
-  kelas: any[];
-  jadwal: any[];
-  users: any[];
-};
-
-const EMPTY_STORE: Store = {
-  mahasiswa: [],
-  dosen: [],
-  matakuliah: [],
-  kelas: [],
-  jadwal: [],
-  users: [],
-};
-
-const ensureStoreFile = async () => {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  try {
-    await fs.access(DATA_FILE);
-  } catch {
-    await fs.writeFile(DATA_FILE, JSON.stringify(EMPTY_STORE, null, 2), 'utf8');
-  }
-};
-
-const readStore = async (): Promise<Store> => {
-  await ensureStoreFile();
-  const raw = await fs.readFile(DATA_FILE, 'utf8');
-  const parsed = JSON.parse(raw) as Partial<Store>;
-  return {
-    mahasiswa: parsed.mahasiswa ?? [],
-    dosen: parsed.dosen ?? [],
-    matakuliah: parsed.matakuliah ?? [],
-    kelas: parsed.kelas ?? [],
-    jadwal: parsed.jadwal ?? [],
-    users: parsed.users ?? [],
-  };
-};
-
-const writeStore = async (store: Store) => {
-  await ensureStoreFile();
-  await fs.writeFile(DATA_FILE, JSON.stringify(store, null, 2), 'utf8');
-};
-
 const nowIso = () => new Date().toISOString();
+
+const collectionSchema = new Schema({}, {
+  strict: false,
+  timestamps: true,
+  versionKey: false,
+});
+
+const getCollectionModel = (modelName: string, collectionName: string) => {
+  if (mongoose.models[modelName]) {
+    return mongoose.model<any>(modelName);
+  }
+
+  return mongoose.model<any>(modelName, collectionSchema, collectionName);
+};
+
+const Mahasiswa = getCollectionModel('Mahasiswa', 'mahasiswa');
+const Dosen = getCollectionModel('Dosen', 'dosen');
+const Matakuliah = getCollectionModel('Matakuliah', 'matakuliah');
+const Kelas = getCollectionModel('Kelas', 'kelas');
+const Jadwal = getCollectionModel('Jadwal', 'jadwal');
+const User = getCollectionModel('User', 'users');
+
+const connectMongo = async () => {
+  if (mongoose.connection.readyState === 1) return;
+
+  await mongoose.connect(MONGODB_URI, {
+    serverSelectionTimeoutMS: 5000,
+  });
+};
 
 const toPlain = (item: any) => {
   if (!item) return item;
   if (typeof item.toObject === 'function') {
     const plain = item.toObject();
-    const { _id, __v, ...rest } = plain;
+    const { _id, ...rest } = plain;
     return { id: _id?.toString?.() ?? String(_id), ...rest };
   }
-  const { _id, __v, ...rest } = item;
-  return { id: item.id ?? _id ?? randomUUID(), ...rest };
+  const { _id, ...rest } = item;
+  return { id: item.id ?? _id, ...rest };
 };
 
-const sortByCreatedAtDesc = (items: any[]) =>
-  [...items].sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime());
+const isValidObjectId = (id: string) => mongoose.Types.ObjectId.isValid(id);
 
-const sortByNameAsc = (items: any[]) =>
-  [...items].sort((a, b) => String(a.nama ?? '').localeCompare(String(b.nama ?? '')));
-
-const sortByHariAsc = (items: any[]) =>
-  [...items].sort((a, b) => String(a.hari ?? '').localeCompare(String(b.hari ?? '')));
-
-const createItem = (payload: any) => ({
-  id: randomUUID(),
-  ...payload,
-  createdAt: nowIso(),
-  updatedAt: nowIso(),
-});
-
-const updateItem = (items: any[], id: string, payload: any) => {
-  const index = items.findIndex(item => String(item.id) === String(id));
-  if (index < 0) return null;
-  const next = [...items];
-  next[index] = { ...next[index], ...payload, updatedAt: nowIso() };
-  return next[index];
-};
-
-const removeItem = (items: any[], id: string) => {
-  const index = items.findIndex(item => String(item.id) === String(id));
-  if (index < 0) return null;
-  const next = [...items];
-  next.splice(index, 1);
-  return next;
-};
+const sendNotFound = (res: Response) => res.status(404).json({ error: 'Not found' });
 
 app.use(cors());
 app.use(express.json());
@@ -150,21 +101,20 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
   const { username, password } = req.body;
 
   if (username === 'admin' && password === 'admin') {
-    const store = await readStore();
-    let user = store.users.find(item => item.email === 'admin@local');
+    let user = await User.findOne({ email: 'admin@local' });
 
     if (!user) {
-      user = createItem({ email: 'admin@local', name: 'Admin (Local)', googleId: null, picture: null });
-      store.users.push(user);
-      await writeStore(store);
+      user = await User.create({ email: 'admin@local', name: 'Admin (Local)', googleId: null, picture: null });
     }
 
+    const payload = toPlain(user);
+
     return res.json({
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      picture: user.picture,
-      token: generateToken(user.id, user.email, user.name),
+      id: payload.id,
+      email: payload.email,
+      name: payload.name,
+      picture: payload.picture,
+      token: generateToken(payload.id, payload.email, payload.name),
     });
   }
 
@@ -200,25 +150,27 @@ app.post('/api/auth/google/callback', async (req: Request, res: Response) => {
     });
 
     const { id: googleId, email, name, picture } = userInfoResponse.data;
-    const store = await readStore();
 
-    let user = store.users.find(item => item.googleId === googleId || item.email === email);
+    let user = await User.findOne({ $or: [{ googleId }, { email }] });
     if (!user) {
-      user = createItem({ googleId, email, name, picture });
-      store.users.push(user);
+      user = await User.create({ googleId, email, name, picture });
     } else {
-      user = { ...user, googleId, email, name, picture, updatedAt: nowIso() };
-      store.users = store.users.map(item => String(item.id) === String(user.id) ? user : item);
+      user.googleId = googleId;
+      user.email = email;
+      user.name = name;
+      user.picture = picture;
+      user.updatedAt = nowIso();
+      await user.save();
     }
 
-    await writeStore(store);
+    const payload = toPlain(user);
 
     return res.json({
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      picture: user.picture,
-      token: generateToken(user.id, user.email, user.name),
+      id: payload.id,
+      email: payload.email,
+      name: payload.name,
+      picture: payload.picture,
+      token: generateToken(payload.id, payload.email, payload.name),
     });
   } catch (error) {
     console.error('OAuth callback error:', error);
@@ -228,226 +180,206 @@ app.post('/api/auth/google/callback', async (req: Request, res: Response) => {
 
 // Mahasiswa
 app.get('/api/mahasiswa', async (_req: Request, res: Response) => {
-  const store = await readStore();
-  res.json(sortByCreatedAtDesc(store.mahasiswa).map(toPlain));
+  const items = await Mahasiswa.find().sort({ createdAt: -1 });
+  res.json(items.map(toPlain));
 });
 
 app.post('/api/mahasiswa', async (req: Request, res: Response) => {
   try {
-    const store = await readStore();
-    const mahasiswa = createItem(req.body);
-    store.mahasiswa.push(mahasiswa);
-    await writeStore(store);
-    return res.status(201).json(mahasiswa);
+    const mahasiswa = await Mahasiswa.create(req.body);
+    return res.status(201).json(toPlain(mahasiswa));
   } catch (error: any) {
     return res.status(400).json({ error: error.message });
   }
 });
 
 app.get('/api/mahasiswa/:id', async (req: Request, res: Response) => {
-  const store = await readStore();
-  const item = store.mahasiswa.find(row => String(row.id) === String(req.params.id));
-  if (!item) return res.status(404).json({ error: 'Not found' });
-  return res.json(item);
+  if (!isValidObjectId(req.params.id)) return sendNotFound(res);
+  const item = await Mahasiswa.findById(req.params.id);
+  if (!item) return sendNotFound(res);
+  return res.json(toPlain(item));
 });
 
 app.put('/api/mahasiswa/:id', async (req: Request, res: Response) => {
-  const store = await readStore();
-  const updated = updateItem(store.mahasiswa, req.params.id, req.body);
-  if (!updated) return res.status(404).json({ error: 'Not found' });
-  store.mahasiswa = store.mahasiswa.map(row => String(row.id) === String(req.params.id) ? updated : row);
-  await writeStore(store);
-  return res.json(updated);
+  if (!isValidObjectId(req.params.id)) return sendNotFound(res);
+  const updated = await Mahasiswa.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
+  if (!updated) return sendNotFound(res);
+  return res.json(toPlain(updated));
 });
 
 app.delete('/api/mahasiswa/:id', async (req: Request, res: Response) => {
-  const store = await readStore();
-  const next = removeItem(store.mahasiswa, req.params.id);
-  if (!next) return res.status(404).json({ error: 'Not found' });
-  store.mahasiswa = next;
-  await writeStore(store);
+  if (!isValidObjectId(req.params.id)) return sendNotFound(res);
+  const deleted = await Mahasiswa.findByIdAndDelete(req.params.id);
+  if (!deleted) return sendNotFound(res);
   return res.json({ message: 'Deleted successfully' });
 });
 
 // Dosen
 app.get('/api/dosen', async (_req: Request, res: Response) => {
-  const store = await readStore();
-  res.json(sortByNameAsc(store.dosen).map(toPlain));
+  const items = await Dosen.find().sort({ nama: 1 });
+  res.json(items.map(toPlain));
 });
 
 app.post('/api/dosen', async (req: Request, res: Response) => {
   try {
-    const store = await readStore();
-    const dosen = createItem(req.body);
-    store.dosen.push(dosen);
-    await writeStore(store);
-    return res.status(201).json(dosen);
+    const dosen = await Dosen.create(req.body);
+    return res.status(201).json(toPlain(dosen));
   } catch (error: any) {
     return res.status(400).json({ error: error.message });
   }
 });
 
 app.get('/api/dosen/:id', async (req: Request, res: Response) => {
-  const store = await readStore();
-  const item = store.dosen.find(row => String(row.id) === String(req.params.id));
-  if (!item) return res.status(404).json({ error: 'Not found' });
-  return res.json(item);
+  if (!isValidObjectId(req.params.id)) return sendNotFound(res);
+  const item = await Dosen.findById(req.params.id);
+  if (!item) return sendNotFound(res);
+  return res.json(toPlain(item));
 });
 
 app.put('/api/dosen/:id', async (req: Request, res: Response) => {
-  const store = await readStore();
-  const updated = updateItem(store.dosen, req.params.id, req.body);
-  if (!updated) return res.status(404).json({ error: 'Not found' });
-  store.dosen = store.dosen.map(row => String(row.id) === String(req.params.id) ? updated : row);
-  await writeStore(store);
-  return res.json(updated);
+  if (!isValidObjectId(req.params.id)) return sendNotFound(res);
+  const updated = await Dosen.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
+  if (!updated) return sendNotFound(res);
+  return res.json(toPlain(updated));
 });
 
 app.delete('/api/dosen/:id', async (req: Request, res: Response) => {
-  const store = await readStore();
-  const next = removeItem(store.dosen, req.params.id);
-  if (!next) return res.status(404).json({ error: 'Not found' });
-  store.dosen = next;
-  await writeStore(store);
+  if (!isValidObjectId(req.params.id)) return sendNotFound(res);
+  const deleted = await Dosen.findByIdAndDelete(req.params.id);
+  if (!deleted) return sendNotFound(res);
   return res.json({ message: 'Deleted successfully' });
 });
 
 // Matakuliah
 app.get('/api/matakuliah', async (_req: Request, res: Response) => {
-  const store = await readStore();
-  res.json(sortByNameAsc(store.matakuliah).map(toPlain));
+  const items = await Matakuliah.find().sort({ nama: 1 });
+  res.json(items.map(toPlain));
 });
 
 app.post('/api/matakuliah', async (req: Request, res: Response) => {
   try {
-    const store = await readStore();
-    const matakuliah = createItem(req.body);
-    store.matakuliah.push(matakuliah);
-    await writeStore(store);
-    return res.status(201).json(matakuliah);
+    const matakuliah = await Matakuliah.create(req.body);
+    return res.status(201).json(toPlain(matakuliah));
   } catch (error: any) {
     return res.status(400).json({ error: error.message });
   }
 });
 
 app.get('/api/matakuliah/:id', async (req: Request, res: Response) => {
-  const store = await readStore();
-  const item = store.matakuliah.find(row => String(row.id) === String(req.params.id));
-  if (!item) return res.status(404).json({ error: 'Not found' });
-  return res.json(item);
+  if (!isValidObjectId(req.params.id)) return sendNotFound(res);
+  const item = await Matakuliah.findById(req.params.id);
+  if (!item) return sendNotFound(res);
+  return res.json(toPlain(item));
 });
 
 app.put('/api/matakuliah/:id', async (req: Request, res: Response) => {
-  const store = await readStore();
-  const updated = updateItem(store.matakuliah, req.params.id, req.body);
-  if (!updated) return res.status(404).json({ error: 'Not found' });
-  store.matakuliah = store.matakuliah.map(row => String(row.id) === String(req.params.id) ? updated : row);
-  await writeStore(store);
-  return res.json(updated);
+  if (!isValidObjectId(req.params.id)) return sendNotFound(res);
+  const updated = await Matakuliah.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
+  if (!updated) return sendNotFound(res);
+  return res.json(toPlain(updated));
 });
 
 app.delete('/api/matakuliah/:id', async (req: Request, res: Response) => {
-  const store = await readStore();
-  const next = removeItem(store.matakuliah, req.params.id);
-  if (!next) return res.status(404).json({ error: 'Not found' });
-  store.matakuliah = next;
-  await writeStore(store);
+  if (!isValidObjectId(req.params.id)) return sendNotFound(res);
+  const deleted = await Matakuliah.findByIdAndDelete(req.params.id);
+  if (!deleted) return sendNotFound(res);
   return res.json({ message: 'Deleted successfully' });
 });
 
 // Kelas
 app.get('/api/kelas', async (_req: Request, res: Response) => {
-  const store = await readStore();
-  res.json(sortByNameAsc(store.kelas).map(toPlain));
+  const items = await Kelas.find().sort({ nama: 1 });
+  res.json(items.map(toPlain));
 });
 
 app.post('/api/kelas', async (req: Request, res: Response) => {
   try {
-    const store = await readStore();
-    const kelas = createItem(req.body);
-    store.kelas.push(kelas);
-    await writeStore(store);
-    return res.status(201).json(kelas);
+    const kelas = await Kelas.create(req.body);
+    return res.status(201).json(toPlain(kelas));
   } catch (error: any) {
     return res.status(400).json({ error: error.message });
   }
 });
 
 app.get('/api/kelas/:id', async (req: Request, res: Response) => {
-  const store = await readStore();
-  const item = store.kelas.find(row => String(row.id) === String(req.params.id));
-  if (!item) return res.status(404).json({ error: 'Not found' });
-  return res.json(item);
+  if (!isValidObjectId(req.params.id)) return sendNotFound(res);
+  const item = await Kelas.findById(req.params.id);
+  if (!item) return sendNotFound(res);
+  return res.json(toPlain(item));
 });
 
 app.put('/api/kelas/:id', async (req: Request, res: Response) => {
-  const store = await readStore();
-  const updated = updateItem(store.kelas, req.params.id, req.body);
-  if (!updated) return res.status(404).json({ error: 'Not found' });
-  store.kelas = store.kelas.map(row => String(row.id) === String(req.params.id) ? updated : row);
-  await writeStore(store);
-  return res.json(updated);
+  if (!isValidObjectId(req.params.id)) return sendNotFound(res);
+  const updated = await Kelas.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
+  if (!updated) return sendNotFound(res);
+  return res.json(toPlain(updated));
 });
 
 app.delete('/api/kelas/:id', async (req: Request, res: Response) => {
-  const store = await readStore();
-  const next = removeItem(store.kelas, req.params.id);
-  if (!next) return res.status(404).json({ error: 'Not found' });
-  store.kelas = next;
-  await writeStore(store);
+  if (!isValidObjectId(req.params.id)) return sendNotFound(res);
+  const deleted = await Kelas.findByIdAndDelete(req.params.id);
+  if (!deleted) return sendNotFound(res);
   return res.json({ message: 'Deleted successfully' });
 });
 
 // Jadwal
 app.get('/api/jadwal', async (_req: Request, res: Response) => {
-  const store = await readStore();
-  res.json(sortByHariAsc(store.jadwal).map(toPlain));
+  const items = await Jadwal.find().sort({ hari: 1 });
+  res.json(items.map(toPlain));
 });
 
 app.post('/api/jadwal', async (req: Request, res: Response) => {
   try {
-    const store = await readStore();
-    const jadwal = createItem(req.body);
-    store.jadwal.push(jadwal);
-    await writeStore(store);
-    return res.status(201).json(jadwal);
+    const jadwal = await Jadwal.create(req.body);
+    return res.status(201).json(toPlain(jadwal));
   } catch (error: any) {
     return res.status(400).json({ error: error.message });
   }
 });
 
 app.get('/api/jadwal/:id', async (req: Request, res: Response) => {
-  const store = await readStore();
-  const item = store.jadwal.find(row => String(row.id) === String(req.params.id));
-  if (!item) return res.status(404).json({ error: 'Not found' });
-  return res.json(item);
+  if (!isValidObjectId(req.params.id)) return sendNotFound(res);
+  const item = await Jadwal.findById(req.params.id);
+  if (!item) return sendNotFound(res);
+  return res.json(toPlain(item));
 });
 
 app.put('/api/jadwal/:id', async (req: Request, res: Response) => {
-  const store = await readStore();
-  const updated = updateItem(store.jadwal, req.params.id, req.body);
-  if (!updated) return res.status(404).json({ error: 'Not found' });
-  store.jadwal = store.jadwal.map(row => String(row.id) === String(req.params.id) ? updated : row);
-  await writeStore(store);
-  return res.json(updated);
+  if (!isValidObjectId(req.params.id)) return sendNotFound(res);
+  const updated = await Jadwal.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
+  if (!updated) return sendNotFound(res);
+  return res.json(toPlain(updated));
 });
 
 app.delete('/api/jadwal/:id', async (req: Request, res: Response) => {
-  const store = await readStore();
-  const next = removeItem(store.jadwal, req.params.id);
-  if (!next) return res.status(404).json({ error: 'Not found' });
-  store.jadwal = next;
-  await writeStore(store);
+  if (!isValidObjectId(req.params.id)) return sendNotFound(res);
+  const deleted = await Jadwal.findByIdAndDelete(req.params.id);
+  if (!deleted) return sendNotFound(res);
   return res.json({ message: 'Deleted successfully' });
 });
 
 app.get('/api/health', (_req: Request, res: Response) => {
-  res.json({ status: 'OK', mode: 'local-json', timestamp: new Date().toISOString() });
+  res.json({
+    status: 'OK',
+    mode: 'mongodb',
+    mongoState: mongoose.connection.readyState,
+    timestamp: new Date().toISOString(),
+  });
 });
 
-app.listen(PORT, async () => {
-  await ensureStoreFile();
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
-  console.log(`🗄️  Local data store: ${DATA_FILE}`);
-  console.log(`🔗 API base: ${API_BASE_URL}`);
-});
+const startServer = async () => {
+  try {
+    await connectMongo();
+
+    app.listen(PORT, () => {
+      console.log(`🚀 Server running on http://localhost:${PORT}`);
+      console.log(`🗄️  MongoDB connected: ${MONGODB_URI}`);
+      console.log(`🔗 API base: ${API_BASE_URL}`);
+    });
+  } catch (error) {
+    console.error('❌ Failed to connect to MongoDB:', error);
+    process.exit(1);
+  }
+};
+
+startServer();

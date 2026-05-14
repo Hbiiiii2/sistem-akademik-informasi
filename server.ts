@@ -153,7 +153,7 @@ const verifyTokenMiddleware = (req: Request & { user?: any }, res: Response, nex
 // Routes - Mahasiswa
 app.get('/api/mahasiswa', async (req: Request, res: Response) => {
   try {
-    const mahasiswa = await Mahasiswa.find().sort({ nama: 1 });
+    const mahasiswa = await Mahasiswa.find().sort({ createdAt: -1 });
     res.json(mahasiswa);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch mahasiswa' });

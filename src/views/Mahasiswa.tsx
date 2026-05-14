@@ -64,6 +64,7 @@ export default function MahasiswaView() {
       );
       
       setData(filtered);
+      setCurrentPage(1);
     } catch (err) {
       handleApiError(err, OperationType.LIST, 'mahasiswa');
     } finally {
@@ -101,6 +102,8 @@ export default function MahasiswaView() {
           backdrop: 'rgba(0,0,0,0.1)'
         });
       }
+      setSearchTerm('');
+      setCurrentPage(1);
       setIsModalOpen(false);
       setEditingId(null);
       setFormData({
@@ -112,7 +115,7 @@ export default function MahasiswaView() {
         nomor_hp: '',
         status: 'Aktif'
       });
-      fetchData();
+      await fetchData();
     } catch (err) {
       handleApiError(err, editingId ? OperationType.UPDATE : OperationType.CREATE, 'mahasiswa');
     }
@@ -149,7 +152,7 @@ export default function MahasiswaView() {
           timer: 2000,
           showConfirmButton: false
         });
-        fetchData();
+        await fetchData();
       } catch (err) {
         handleApiError(err, OperationType.DELETE, 'mahasiswa');
         Swal.fire('Error', 'Gagal menghapus data.', 'error');

@@ -1,136 +1,132 @@
 /**
  * Express Backend Server untuk Sistem Akademik
- * MongoDB Integration
+ * Local JSON storage fallback (works without MongoDB)
  */
 
-import express, { Express, Request, Response, NextFunction } from 'express';
-import mongoose from 'mongoose';
+import express, { Express, NextFunction, Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import fs from 'fs/promises';
+import path from 'path';
+import { randomUUID } from 'crypto';
 import jwt from 'jsonwebtoken';
 import axios from 'axios';
 
-// Load environment variables
 dotenv.config();
 
 const app: Express = express();
 const PORT = process.env.PORT || 5000;
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/sistem-akademik';
+const API_BASE_URL = process.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret_key_change_in_production';
 
-// Middleware
+const DATA_DIR = path.join(process.cwd(), 'data');
+const DATA_FILE = path.join(DATA_DIR, 'local-db.json');
+
+type Store = {
+  mahasiswa: any[];
+  dosen: any[];
+  matakuliah: any[];
+  kelas: any[];
+  jadwal: any[];
+  users: any[];
+};
+
+const EMPTY_STORE: Store = {
+  mahasiswa: [],
+  dosen: [],
+  matakuliah: [],
+  kelas: [],
+  jadwal: [],
+  users: [],
+};
+
+const ensureStoreFile = async () => {
+  await fs.mkdir(DATA_DIR, { recursive: true });
+  try {
+    await fs.access(DATA_FILE);
+  } catch {
+    await fs.writeFile(DATA_FILE, JSON.stringify(EMPTY_STORE, null, 2), 'utf8');
+  }
+};
+
+const readStore = async (): Promise<Store> => {
+  await ensureStoreFile();
+  const raw = await fs.readFile(DATA_FILE, 'utf8');
+  const parsed = JSON.parse(raw) as Partial<Store>;
+  return {
+    mahasiswa: parsed.mahasiswa ?? [],
+    dosen: parsed.dosen ?? [],
+    matakuliah: parsed.matakuliah ?? [],
+    kelas: parsed.kelas ?? [],
+    jadwal: parsed.jadwal ?? [],
+    users: parsed.users ?? [],
+  };
+};
+
+const writeStore = async (store: Store) => {
+  await ensureStoreFile();
+  await fs.writeFile(DATA_FILE, JSON.stringify(store, null, 2), 'utf8');
+};
+
+const nowIso = () => new Date().toISOString();
+
+const toPlain = (item: any) => {
+  if (!item) return item;
+  if (typeof item.toObject === 'function') {
+    const plain = item.toObject();
+    const { _id, __v, ...rest } = plain;
+    return { id: _id?.toString?.() ?? String(_id), ...rest };
+  }
+  const { _id, __v, ...rest } = item;
+  return { id: item.id ?? _id ?? randomUUID(), ...rest };
+};
+
+const sortByCreatedAtDesc = (items: any[]) =>
+  [...items].sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime());
+
+const sortByNameAsc = (items: any[]) =>
+  [...items].sort((a, b) => String(a.nama ?? '').localeCompare(String(b.nama ?? '')));
+
+const sortByHariAsc = (items: any[]) =>
+  [...items].sort((a, b) => String(a.hari ?? '').localeCompare(String(b.hari ?? '')));
+
+const createItem = (payload: any) => ({
+  id: randomUUID(),
+  ...payload,
+  createdAt: nowIso(),
+  updatedAt: nowIso(),
+});
+
+const updateItem = (items: any[], id: string, payload: any) => {
+  const index = items.findIndex(item => String(item.id) === String(id));
+  if (index < 0) return null;
+  const next = [...items];
+  next[index] = { ...next[index], ...payload, updatedAt: nowIso() };
+  return next[index];
+};
+
+const removeItem = (items: any[], id: string) => {
+  const index = items.findIndex(item => String(item.id) === String(id));
+  if (index < 0) return null;
+  const next = [...items];
+  next.splice(index, 1);
+  return next;
+};
+
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Error handling middleware
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
   console.error(err);
   res.status(err.status || 500).json({
     error: err.message || 'Internal Server Error',
-    status: err.status || 500
+    status: err.status || 500,
   });
 });
-
-// MongoDB Connection
-mongoose.connect(MONGODB_URI)
-  .then(() => {
-    console.log('✅ MongoDB connected successfully');
-  })
-  .catch((err) => {
-    console.error('❌ MongoDB connection error:', err);
-    process.exit(1);
-  });
-
-// Models
-const mahasiswaSchema = new mongoose.Schema({
-  nama: { type: String, required: true },
-  nim: { type: String, required: true, unique: true },
-  jurusan: { type: String, required: true },
-  semester: { type: Number, required: true },
-  email: { type: String, required: true },
-  nomor_hp: { type: String, required: true },
-  status: { 
-    type: String, 
-    enum: ['Aktif', 'Cuti', 'Lulus', 'Keluar'],
-    default: 'Aktif'
-  },
-  createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now }
-});
-
-const dosenSchema = new mongoose.Schema({
-  nama: { type: String, required: true },
-  nip: { type: String, required: true, unique: true },
-  email: { type: String, required: true },
-  nomor_hp: { type: String, required: true },
-  bidang: { type: String, required: true },
-  status: { 
-    type: String, 
-    enum: ['Aktif', 'Cuti', 'Pensiun'],
-    default: 'Aktif'
-  },
-  createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now }
-});
-
-const matakuliahSchema = new mongoose.Schema({
-  kode: { type: String, required: true, unique: true },
-  nama: { type: String, required: true },
-  sks: { type: Number, required: true },
-  semester: { type: Number, required: true },
-  dosen_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Dosen' },
-  createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now }
-});
-
-const kelasSchema = new mongoose.Schema({
-  nama: { type: String, required: true },
-  matakuliah_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Matakuliah', required: true },
-  dosen_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Dosen', required: true },
-  kapasitas: { type: Number, required: true },
-  ruangan: { type: String, required: true },
-  semester: { type: Number, required: true },
-  createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now }
-});
-
-const jadwalSchema = new mongoose.Schema({
-  kelas_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Kelas', required: true },
-  hari: { type: String, required: true },
-  jam_mulai: { type: String, required: true },
-  jam_selesai: { type: String, required: true },
-  ruangan: { type: String, required: true },
-  createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now }
-});
-
-const Mahasiswa = mongoose.model('Mahasiswa', mahasiswaSchema);
-const Dosen = mongoose.model('Dosen', dosenSchema);
-const Matakuliah = mongoose.model('Matakuliah', matakuliahSchema);
-const Kelas = mongoose.model('Kelas', kelasSchema);
-const Jadwal = mongoose.model('Jadwal', jadwalSchema);
-
-// User/Auth Schema for OAuth
-const userSchema = new mongoose.Schema({
-  email: { type: String, required: true, unique: true },
-  name: { type: String, required: true },
-  googleId: { type: String, unique: true, sparse: true },
-  picture: { type: String },
-  createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now }
-});
-
-const User = mongoose.model('User', userSchema);
-
-// JWT Utilities
-const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret_key_change_in_production';
 
 const generateToken = (userId: string, userEmail: string, userName: string) => {
-  return jwt.sign(
-    { id: userId, email: userEmail, name: userName },
-    JWT_SECRET,
-    { expiresIn: '24h' }
-  );
+  return jwt.sign({ id: userId, email: userEmail, name: userName }, JWT_SECRET, { expiresIn: '24h' });
 };
 
 const verifyTokenMiddleware = (req: Request & { user?: any }, res: Response, next: NextFunction) => {
@@ -142,415 +138,316 @@ const verifyTokenMiddleware = (req: Request & { user?: any }, res: Response, nex
   }
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
+    req.user = jwt.verify(token, JWT_SECRET);
     next();
-  } catch (error) {
+  } catch {
     res.status(401).json({ error: 'Invalid token' });
   }
 };
 
-// Routes - Mahasiswa
-app.get('/api/mahasiswa', async (req: Request, res: Response) => {
-  try {
-    const mahasiswa = await Mahasiswa.find().sort({ createdAt: -1 });
-    res.json(mahasiswa);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch mahasiswa' });
+// Auth
+app.post('/api/auth/login', async (req: Request, res: Response) => {
+  const { username, password } = req.body;
+
+  if (username === 'admin' && password === 'admin') {
+    const store = await readStore();
+    let user = store.users.find(item => item.email === 'admin@local');
+
+    if (!user) {
+      user = createItem({ email: 'admin@local', name: 'Admin (Local)', googleId: null, picture: null });
+      store.users.push(user);
+      await writeStore(store);
+    }
+
+    return res.json({
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      picture: user.picture,
+      token: generateToken(user.id, user.email, user.name),
+    });
   }
+
+  return res.status(401).json({ error: 'Invalid credentials' });
 });
 
-app.post('/api/mahasiswa', async (req: Request, res: Response) => {
-  try {
-    const mahasiswa = new Mahasiswa(req.body);
-    await mahasiswa.save();
-    res.status(201).json(mahasiswa);
-  } catch (error: any) {
-    res.status(400).json({ error: error.message });
-  }
+app.get('/api/auth/verify', verifyTokenMiddleware as any, async (req: Request & { user?: any }, res: Response) => {
+  return res.json({
+    id: req.user.id,
+    email: req.user.email,
+    name: req.user.name,
+    picture: null,
+    token: generateToken(req.user.id, req.user.email, req.user.name),
+  });
 });
 
-app.get('/api/mahasiswa/:id', async (req: Request, res: Response) => {
-  try {
-    const mahasiswa = await Mahasiswa.findById(req.params.id);
-    if (!mahasiswa) return res.status(404).json({ error: 'Not found' });
-    res.json(mahasiswa);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch mahasiswa' });
-  }
-});
-
-app.put('/api/mahasiswa/:id', async (req: Request, res: Response) => {
-  try {
-    const mahasiswa = await Mahasiswa.findByIdAndUpdate(
-      req.params.id,
-      { ...req.body, updatedAt: new Date() },
-      { new: true }
-    );
-    if (!mahasiswa) return res.status(404).json({ error: 'Not found' });
-    res.json(mahasiswa);
-  } catch (error: any) {
-    res.status(400).json({ error: error.message });
-  }
-});
-
-app.delete('/api/mahasiswa/:id', async (req: Request, res: Response) => {
-  try {
-    const mahasiswa = await Mahasiswa.findByIdAndDelete(req.params.id);
-    if (!mahasiswa) return res.status(404).json({ error: 'Not found' });
-    res.json({ message: 'Deleted successfully' });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to delete mahasiswa' });
-  }
-});
-
-// Routes - Dosen
-app.get('/api/dosen', async (req: Request, res: Response) => {
-  try {
-    const dosen = await Dosen.find().sort({ nama: 1 });
-    res.json(dosen);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch dosen' });
-  }
-});
-
-app.post('/api/dosen', async (req: Request, res: Response) => {
-  try {
-    const dosen = new Dosen(req.body);
-    await dosen.save();
-    res.status(201).json(dosen);
-  } catch (error: any) {
-    res.status(400).json({ error: error.message });
-  }
-});
-
-app.get('/api/dosen/:id', async (req: Request, res: Response) => {
-  try {
-    const dosen = await Dosen.findById(req.params.id);
-    if (!dosen) return res.status(404).json({ error: 'Not found' });
-    res.json(dosen);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch dosen' });
-  }
-});
-
-app.put('/api/dosen/:id', async (req: Request, res: Response) => {
-  try {
-    const dosen = await Dosen.findByIdAndUpdate(
-      req.params.id,
-      { ...req.body, updatedAt: new Date() },
-      { new: true }
-    );
-    if (!dosen) return res.status(404).json({ error: 'Not found' });
-    res.json(dosen);
-  } catch (error: any) {
-    res.status(400).json({ error: error.message });
-  }
-});
-
-app.delete('/api/dosen/:id', async (req: Request, res: Response) => {
-  try {
-    const dosen = await Dosen.findByIdAndDelete(req.params.id);
-    if (!dosen) return res.status(404).json({ error: 'Not found' });
-    res.json({ message: 'Deleted successfully' });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to delete dosen' });
-  }
-});
-
-// Routes - Matakuliah
-app.get('/api/matakuliah', async (req: Request, res: Response) => {
-  try {
-    const matakuliah = await Matakuliah.find().populate('dosen_id').sort({ nama: 1 });
-    res.json(matakuliah);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch matakuliah' });
-  }
-});
-
-app.post('/api/matakuliah', async (req: Request, res: Response) => {
-  try {
-    const matakuliah = new Matakuliah(req.body);
-    await matakuliah.save();
-    await matakuliah.populate('dosen_id');
-    res.status(201).json(matakuliah);
-  } catch (error: any) {
-    res.status(400).json({ error: error.message });
-  }
-});
-
-app.get('/api/matakuliah/:id', async (req: Request, res: Response) => {
-  try {
-    const matakuliah = await Matakuliah.findById(req.params.id).populate('dosen_id');
-    if (!matakuliah) return res.status(404).json({ error: 'Not found' });
-    res.json(matakuliah);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch matakuliah' });
-  }
-});
-
-app.put('/api/matakuliah/:id', async (req: Request, res: Response) => {
-  try {
-    const matakuliah = await Matakuliah.findByIdAndUpdate(
-      req.params.id,
-      { ...req.body, updatedAt: new Date() },
-      { new: true }
-    ).populate('dosen_id');
-    if (!matakuliah) return res.status(404).json({ error: 'Not found' });
-    res.json(matakuliah);
-  } catch (error: any) {
-    res.status(400).json({ error: error.message });
-  }
-});
-
-app.delete('/api/matakuliah/:id', async (req: Request, res: Response) => {
-  try {
-    const matakuliah = await Matakuliah.findByIdAndDelete(req.params.id);
-    if (!matakuliah) return res.status(404).json({ error: 'Not found' });
-    res.json({ message: 'Deleted successfully' });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to delete matakuliah' });
-  }
-});
-
-// Routes - Kelas
-app.get('/api/kelas', async (req: Request, res: Response) => {
-  try {
-    const kelas = await Kelas.find().populate(['matakuliah_id', 'dosen_id']).sort({ nama: 1 });
-    res.json(kelas);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch kelas' });
-  }
-});
-
-app.post('/api/kelas', async (req: Request, res: Response) => {
-  try {
-    const kelas = new Kelas(req.body);
-    await kelas.save();
-    await kelas.populate(['matakuliah_id', 'dosen_id']);
-    res.status(201).json(kelas);
-  } catch (error: any) {
-    res.status(400).json({ error: error.message });
-  }
-});
-
-app.get('/api/kelas/:id', async (req: Request, res: Response) => {
-  try {
-    const kelas = await Kelas.findById(req.params.id).populate(['matakuliah_id', 'dosen_id']);
-    if (!kelas) return res.status(404).json({ error: 'Not found' });
-    res.json(kelas);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch kelas' });
-  }
-});
-
-app.put('/api/kelas/:id', async (req: Request, res: Response) => {
-  try {
-    const kelas = await Kelas.findByIdAndUpdate(
-      req.params.id,
-      { ...req.body, updatedAt: new Date() },
-      { new: true }
-    ).populate(['matakuliah_id', 'dosen_id']);
-    if (!kelas) return res.status(404).json({ error: 'Not found' });
-    res.json(kelas);
-  } catch (error: any) {
-    res.status(400).json({ error: error.message });
-  }
-});
-
-app.delete('/api/kelas/:id', async (req: Request, res: Response) => {
-  try {
-    const kelas = await Kelas.findByIdAndDelete(req.params.id);
-    if (!kelas) return res.status(404).json({ error: 'Not found' });
-    res.json({ message: 'Deleted successfully' });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to delete kelas' });
-  }
-});
-
-// Routes - Jadwal
-app.get('/api/jadwal', async (req: Request, res: Response) => {
-  try {
-    const jadwal = await Jadwal.find().populate('kelas_id').sort({ hari: 1, jam_mulai: 1 });
-    res.json(jadwal);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch jadwal' });
-  }
-});
-
-app.post('/api/jadwal', async (req: Request, res: Response) => {
-  try {
-    const jadwal = new Jadwal(req.body);
-    await jadwal.save();
-    await jadwal.populate('kelas_id');
-    res.status(201).json(jadwal);
-  } catch (error: any) {
-    res.status(400).json({ error: error.message });
-  }
-});
-
-app.get('/api/jadwal/:id', async (req: Request, res: Response) => {
-  try {
-    const jadwal = await Jadwal.findById(req.params.id).populate('kelas_id');
-    if (!jadwal) return res.status(404).json({ error: 'Not found' });
-    res.json(jadwal);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch jadwal' });
-  }
-});
-
-app.put('/api/jadwal/:id', async (req: Request, res: Response) => {
-  try {
-    const jadwal = await Jadwal.findByIdAndUpdate(
-      req.params.id,
-      { ...req.body, updatedAt: new Date() },
-      { new: true }
-    ).populate('kelas_id');
-    if (!jadwal) return res.status(404).json({ error: 'Not found' });
-    res.json(jadwal);
-  } catch (error: any) {
-    res.status(400).json({ error: error.message });
-  }
-});
-
-app.delete('/api/jadwal/:id', async (req: Request, res: Response) => {
-  try {
-    const jadwal = await Jadwal.findByIdAndDelete(req.params.id);
-    if (!jadwal) return res.status(404).json({ error: 'Not found' });
-    res.json({ message: 'Deleted successfully' });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to delete jadwal' });
-  }
-});
-
-// ==================== Auth Routes ====================
-
-// OAuth callback - exchange code for token
 app.post('/api/auth/google/callback', async (req: Request, res: Response) => {
   try {
     const { code } = req.body;
+    if (!code) return res.status(400).json({ error: 'Authorization code required' });
 
-    if (!code) {
-      return res.status(400).json({ error: 'Authorization code required' });
-    }
-
-    // Exchange code for token with Google
     const tokenResponse = await axios.post('https://oauth2.googleapis.com/token', {
       client_id: process.env.VITE_GOOGLE_CLIENT_ID,
       client_secret: process.env.GOOGLE_CLIENT_SECRET,
       code,
       grant_type: 'authorization_code',
-      redirect_uri: `${process.env.OAUTH_REDIRECT_URI || 'http://localhost:5000/api/auth/google/callback'}`,
+      redirect_uri: process.env.OAUTH_REDIRECT_URI || 'http://localhost:3000/auth/callback',
     });
 
-    const { access_token } = tokenResponse.data;
-
-    // Get user info from Google
-    const userInfoResponse = await axios.get(
-      'https://www.googleapis.com/oauth2/v2/userinfo',
-      { headers: { Authorization: `Bearer ${access_token}` } }
-    );
+    const accessToken = tokenResponse.data?.access_token;
+    const userInfoResponse = await axios.get('https://www.googleapis.com/oauth2/v2/userinfo', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
 
     const { id: googleId, email, name, picture } = userInfoResponse.data;
+    const store = await readStore();
 
-    // Find or create user
-    let user = await User.findOne({ googleId });
-
+    let user = store.users.find(item => item.googleId === googleId || item.email === email);
     if (!user) {
-      user = await User.create({
-        googleId,
-        email,
-        name,
-        picture,
-      });
+      user = createItem({ googleId, email, name, picture });
+      store.users.push(user);
     } else {
-      // Update user info
-      user.name = name;
-      user.picture = picture;
-      await user.save();
+      user = { ...user, googleId, email, name, picture, updatedAt: nowIso() };
+      store.users = store.users.map(item => String(item.id) === String(user.id) ? user : item);
     }
 
-    // Generate JWT token
-    const jwtToken = generateToken(user._id.toString(), user.email, user.name);
+    await writeStore(store);
 
-    res.json({
-      id: user._id.toString(),
+    return res.json({
+      id: user.id,
       email: user.email,
       name: user.name,
       picture: user.picture,
-      token: jwtToken,
+      token: generateToken(user.id, user.email, user.name),
     });
   } catch (error) {
     console.error('OAuth callback error:', error);
-    res.status(500).json({ error: 'Authentication failed' });
+    return res.status(500).json({ error: 'Authentication failed' });
   }
 });
 
-// Verify token
-app.get('/api/auth/verify', verifyTokenMiddleware as any, async (req: Request & { user?: any }, res: Response) => {
+// Mahasiswa
+app.get('/api/mahasiswa', async (_req: Request, res: Response) => {
+  const store = await readStore();
+  res.json(sortByCreatedAtDesc(store.mahasiswa).map(toPlain));
+});
+
+app.post('/api/mahasiswa', async (req: Request, res: Response) => {
   try {
-    const user = await User.findById(req.user.id);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    const jwtToken = generateToken(user._id.toString(), user.email, user.name);
-
-    res.json({
-      id: user._id.toString(),
-      email: user.email,
-      name: user.name,
-      picture: user.picture,
-      token: jwtToken,
-    });
-  } catch (error) {
-    console.error('Verify error:', error);
-    res.status(500).json({ error: 'Verification failed' });
+    const store = await readStore();
+    const mahasiswa = createItem(req.body);
+    store.mahasiswa.push(mahasiswa);
+    await writeStore(store);
+    return res.status(201).json(mahasiswa);
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message });
   }
 });
 
-// Development/local login (quick test) - accepts username/password and returns JWT
-app.post('/api/auth/login', async (req: Request, res: Response) => {
+app.get('/api/mahasiswa/:id', async (req: Request, res: Response) => {
+  const store = await readStore();
+  const item = store.mahasiswa.find(row => String(row.id) === String(req.params.id));
+  if (!item) return res.status(404).json({ error: 'Not found' });
+  return res.json(item);
+});
+
+app.put('/api/mahasiswa/:id', async (req: Request, res: Response) => {
+  const store = await readStore();
+  const updated = updateItem(store.mahasiswa, req.params.id, req.body);
+  if (!updated) return res.status(404).json({ error: 'Not found' });
+  store.mahasiswa = store.mahasiswa.map(row => String(row.id) === String(req.params.id) ? updated : row);
+  await writeStore(store);
+  return res.json(updated);
+});
+
+app.delete('/api/mahasiswa/:id', async (req: Request, res: Response) => {
+  const store = await readStore();
+  const next = removeItem(store.mahasiswa, req.params.id);
+  if (!next) return res.status(404).json({ error: 'Not found' });
+  store.mahasiswa = next;
+  await writeStore(store);
+  return res.json({ message: 'Deleted successfully' });
+});
+
+// Dosen
+app.get('/api/dosen', async (_req: Request, res: Response) => {
+  const store = await readStore();
+  res.json(sortByNameAsc(store.dosen).map(toPlain));
+});
+
+app.post('/api/dosen', async (req: Request, res: Response) => {
   try {
-    const { username, password } = req.body;
-
-    // Simple local check (ONLY FOR DEVELOPMENT)
-    if (username === 'admin' && password === 'admin') {
-      // find or create dev user
-      let user = await User.findOne({ email: 'admin@local' });
-      if (!user) {
-        user = await User.create({
-          email: 'admin@local',
-          name: 'Admin (Local)',
-          googleId: null,
-          picture: null,
-        });
-      }
-
-      const jwtToken = generateToken(user._id.toString(), user.email, user.name);
-
-      return res.json({
-        id: user._id.toString(),
-        email: user.email,
-        name: user.name,
-        picture: user.picture,
-        token: jwtToken,
-      });
-    }
-
-    return res.status(401).json({ error: 'Invalid credentials' });
-  } catch (error) {
-    console.error('Dev login error:', error);
-    return res.status(500).json({ error: 'Login failed' });
+    const store = await readStore();
+    const dosen = createItem(req.body);
+    store.dosen.push(dosen);
+    await writeStore(store);
+    return res.status(201).json(dosen);
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message });
   }
 });
 
-// Health check
-app.get('/api/health', (req: Request, res: Response) => {
-  res.json({ status: 'OK', timestamp: new Date() });
+app.get('/api/dosen/:id', async (req: Request, res: Response) => {
+  const store = await readStore();
+  const item = store.dosen.find(row => String(row.id) === String(req.params.id));
+  if (!item) return res.status(404).json({ error: 'Not found' });
+  return res.json(item);
 });
 
-// Start server
-app.listen(PORT, () => {
+app.put('/api/dosen/:id', async (req: Request, res: Response) => {
+  const store = await readStore();
+  const updated = updateItem(store.dosen, req.params.id, req.body);
+  if (!updated) return res.status(404).json({ error: 'Not found' });
+  store.dosen = store.dosen.map(row => String(row.id) === String(req.params.id) ? updated : row);
+  await writeStore(store);
+  return res.json(updated);
+});
+
+app.delete('/api/dosen/:id', async (req: Request, res: Response) => {
+  const store = await readStore();
+  const next = removeItem(store.dosen, req.params.id);
+  if (!next) return res.status(404).json({ error: 'Not found' });
+  store.dosen = next;
+  await writeStore(store);
+  return res.json({ message: 'Deleted successfully' });
+});
+
+// Matakuliah
+app.get('/api/matakuliah', async (_req: Request, res: Response) => {
+  const store = await readStore();
+  res.json(sortByNameAsc(store.matakuliah).map(toPlain));
+});
+
+app.post('/api/matakuliah', async (req: Request, res: Response) => {
+  try {
+    const store = await readStore();
+    const matakuliah = createItem(req.body);
+    store.matakuliah.push(matakuliah);
+    await writeStore(store);
+    return res.status(201).json(matakuliah);
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message });
+  }
+});
+
+app.get('/api/matakuliah/:id', async (req: Request, res: Response) => {
+  const store = await readStore();
+  const item = store.matakuliah.find(row => String(row.id) === String(req.params.id));
+  if (!item) return res.status(404).json({ error: 'Not found' });
+  return res.json(item);
+});
+
+app.put('/api/matakuliah/:id', async (req: Request, res: Response) => {
+  const store = await readStore();
+  const updated = updateItem(store.matakuliah, req.params.id, req.body);
+  if (!updated) return res.status(404).json({ error: 'Not found' });
+  store.matakuliah = store.matakuliah.map(row => String(row.id) === String(req.params.id) ? updated : row);
+  await writeStore(store);
+  return res.json(updated);
+});
+
+app.delete('/api/matakuliah/:id', async (req: Request, res: Response) => {
+  const store = await readStore();
+  const next = removeItem(store.matakuliah, req.params.id);
+  if (!next) return res.status(404).json({ error: 'Not found' });
+  store.matakuliah = next;
+  await writeStore(store);
+  return res.json({ message: 'Deleted successfully' });
+});
+
+// Kelas
+app.get('/api/kelas', async (_req: Request, res: Response) => {
+  const store = await readStore();
+  res.json(sortByNameAsc(store.kelas).map(toPlain));
+});
+
+app.post('/api/kelas', async (req: Request, res: Response) => {
+  try {
+    const store = await readStore();
+    const kelas = createItem(req.body);
+    store.kelas.push(kelas);
+    await writeStore(store);
+    return res.status(201).json(kelas);
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message });
+  }
+});
+
+app.get('/api/kelas/:id', async (req: Request, res: Response) => {
+  const store = await readStore();
+  const item = store.kelas.find(row => String(row.id) === String(req.params.id));
+  if (!item) return res.status(404).json({ error: 'Not found' });
+  return res.json(item);
+});
+
+app.put('/api/kelas/:id', async (req: Request, res: Response) => {
+  const store = await readStore();
+  const updated = updateItem(store.kelas, req.params.id, req.body);
+  if (!updated) return res.status(404).json({ error: 'Not found' });
+  store.kelas = store.kelas.map(row => String(row.id) === String(req.params.id) ? updated : row);
+  await writeStore(store);
+  return res.json(updated);
+});
+
+app.delete('/api/kelas/:id', async (req: Request, res: Response) => {
+  const store = await readStore();
+  const next = removeItem(store.kelas, req.params.id);
+  if (!next) return res.status(404).json({ error: 'Not found' });
+  store.kelas = next;
+  await writeStore(store);
+  return res.json({ message: 'Deleted successfully' });
+});
+
+// Jadwal
+app.get('/api/jadwal', async (_req: Request, res: Response) => {
+  const store = await readStore();
+  res.json(sortByHariAsc(store.jadwal).map(toPlain));
+});
+
+app.post('/api/jadwal', async (req: Request, res: Response) => {
+  try {
+    const store = await readStore();
+    const jadwal = createItem(req.body);
+    store.jadwal.push(jadwal);
+    await writeStore(store);
+    return res.status(201).json(jadwal);
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message });
+  }
+});
+
+app.get('/api/jadwal/:id', async (req: Request, res: Response) => {
+  const store = await readStore();
+  const item = store.jadwal.find(row => String(row.id) === String(req.params.id));
+  if (!item) return res.status(404).json({ error: 'Not found' });
+  return res.json(item);
+});
+
+app.put('/api/jadwal/:id', async (req: Request, res: Response) => {
+  const store = await readStore();
+  const updated = updateItem(store.jadwal, req.params.id, req.body);
+  if (!updated) return res.status(404).json({ error: 'Not found' });
+  store.jadwal = store.jadwal.map(row => String(row.id) === String(req.params.id) ? updated : row);
+  await writeStore(store);
+  return res.json(updated);
+});
+
+app.delete('/api/jadwal/:id', async (req: Request, res: Response) => {
+  const store = await readStore();
+  const next = removeItem(store.jadwal, req.params.id);
+  if (!next) return res.status(404).json({ error: 'Not found' });
+  store.jadwal = next;
+  await writeStore(store);
+  return res.json({ message: 'Deleted successfully' });
+});
+
+app.get('/api/health', (_req: Request, res: Response) => {
+  res.json({ status: 'OK', mode: 'local-json', timestamp: new Date().toISOString() });
+});
+
+app.listen(PORT, async () => {
+  await ensureStoreFile();
   console.log(`🚀 Server running on http://localhost:${PORT}`);
+  console.log(`🗄️  Local data store: ${DATA_FILE}`);
+  console.log(`🔗 API base: ${API_BASE_URL}`);
 });

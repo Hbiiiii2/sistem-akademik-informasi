@@ -1,0 +1,33 @@
+{
+  "mahasiswa": [
+    {
+      "id": "f3daef1d-9aad-45f6-b8ae-743a77ee7d49",
+      "status": "Aktif",
+      "semester": 1,
+      "jurusan": "TI",
+      "nama": "Test User",
+      "email": "test@example.com",
+      "nim": "TEST123",
+      "nomor_hp": "081234",
+      "createdAt": "2026-05-14T00:56:23.626Z",
+      "updatedAt": "2026-05-14T00:56:23.627Z"
+    },
+    {
+      "id": "606e93c2-32cd-44b7-9e52-1d89c67fc226",
+      "nama": "Ahmad Habibi",
+      "nim": "15240133",
+      "jurusan": "Informatika",
+      "semester": 2,
+      "email": "15240133@bsi.ac.id",
+      "nomor_hp": "081998043342",
+      "status": "Aktif",
+      "createdAt": "2026-05-14T00:57:47.087Z",
+      "updatedAt": "2026-05-14T00:57:47.088Z"
+    }
+  ],
+  "dosen": [],
+  "matakuliah": [],
+  "kelas": [],
+  "jadwal": [],
+  "users": []
+}
